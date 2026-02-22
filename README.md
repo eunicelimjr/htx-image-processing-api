@@ -50,17 +50,22 @@ Built as part of a technical assessment.
 
 Uses HuggingFace BLIP model:
 
+```
 Salesforce/blip-image-captioning-large
+```
 
 Captioning behavior:
 - Lazy-loaded (model loads only when needed)
 - Automatically falls back if disabled or fails
+- Runs on CPU by default (GPU if available)
 
 Environment variables:
 
-DISABLE_CAPTION=1              # Disable AI captioning  
-CAPTION_MODEL=<model_name>     # Override caption model  
-CAPTION_FALLBACK=...           # Custom fallback caption text  
+```bash
+DISABLE_CAPTION=1              # Disable AI captioning
+CAPTION_MODEL=<model_name>     # Override caption model
+CAPTION_FALLBACK=...           # Custom fallback caption text
+```
 
 ---
 
@@ -69,7 +74,10 @@ CAPTION_FALLBACK=...           # Custom fallback caption text
 Uses SQLite.
 
 Database file:
+
+```
 htx_images.db
+```
 
 Persisted fields:
 - image id
@@ -86,37 +94,49 @@ Persisted fields:
 
 ## 📦 Installation
 
-### 1. Clone the repository
+### 1️⃣ Clone the repository
 
-git clone <your-repo-url>  
-cd htx-image-processing-api  
+```bash
+git clone <your-repo-url>
+cd htx-image-processing-api
+```
 
-### 2. Create virtual environment
+### 2️⃣ Create virtual environment
 
-python -m venv .venv  
-.\.venv\Scripts\activate  
+```bash
+python -m venv .venv
+.\.venv\Scripts\activate
+```
 
-### 3. Install dependencies
+### 3️⃣ Install dependencies
 
-pip install -r requirements.txt  
+```bash
+pip install -r requirements.txt
+```
 
 ---
 
 ## ▶️ Running the API
 
-uvicorn app.main:app --reload  
+```bash
+uvicorn app.main:app --reload
+```
 
 Open in browser:
 
+```
 http://127.0.0.1:8000/docs
+```
 
-Swagger UI is enabled for testing.
+Swagger UI is enabled for interactive testing.
 
 ---
 
 ## 🧪 Running Tests
 
-python -m pytest -q  
+```bash
+python -m pytest -q
+```
 
 Tests cover:
 - health endpoint
@@ -130,20 +150,22 @@ Tests cover:
 
 ## 📁 Project Structure
 
-app/  
- ├── main.py          # FastAPI routes  
- ├── processing.py    # Image processing + AI captioning  
- ├── models.py        # SQLAlchemy models  
- ├── db.py            # Database configuration  
+```
+app/
+ ├── main.py          # FastAPI routes
+ ├── processing.py    # Image processing + AI captioning
+ ├── models.py        # SQLAlchemy models
+ ├── db.py            # Database configuration
 
-storage/  
- ├── originals/  
- └── thumbs/  
-     ├── small/  
-     └── medium/  
+storage/
+ ├── originals/
+ └── thumbs/
+     ├── small/
+     └── medium/
 
-tests/  
- └── test_api.py  
+tests/
+ └── test_api.py
+```
 
 ---
 
@@ -154,6 +176,7 @@ tests/
 - Lazy model loading to reduce startup cost
 - Defensive error handling to ensure consistent API response format
 - ISO-8601 timestamps (UTC)
+- Thumbnails saved as JPEG for consistency
 
 ---
 
@@ -168,6 +191,7 @@ Invalid formats return structured failure responses.
 
 ## 📊 Example Response
 
+```json
 {
   "status": "success",
   "data": {
@@ -189,12 +213,14 @@ Invalid formats return structured failure responses.
   },
   "error": null
 }
+```
 
 ---
 
 ## 🏁 Status
 
-All required endpoints implemented.  
-AI captioning working.  
-Processing statistics implemented.  
-Database persistence enabled.
+✅ All required endpoints implemented  
+✅ AI captioning working (BLIP)  
+✅ Processing statistics implemented  
+✅ Database persistence enabled  
+✅ Unit tests passing  
