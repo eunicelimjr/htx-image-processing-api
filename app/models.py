@@ -7,8 +7,8 @@ class Image(Base):
     __tablename__ = "images"
 
     id = Column(String, primary_key=True, index=True)
-    original_name = Column(String)
-    content_type = Column(String)
+    original_name = Column(String, nullable=False)
+    content_type = Column(String, nullable=False)
 
     status = Column(String, default="processing")  # processing | success | failed
     error_message = Column(String, nullable=True)

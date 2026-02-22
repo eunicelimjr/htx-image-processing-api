@@ -1,19 +1,9 @@
 # Python
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
 .venv/
 .env
 
-# SQLite database
-*.db
-
-# Windows
-Thumbs.db
-
-# VS Code
-.vscode/
-
-# Uploaded images
+# Runtime data
+htx_images.db
 storage/
