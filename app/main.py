@@ -1,7 +1,8 @@
 import logging
+import os
 from pathlib import Path
 from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.responses import FileResponse
@@ -24,7 +25,7 @@ app = FastAPI(title="HTX Image Processing API")
 Base.metadata.create_all(bind=engine)
 
 # Storage
-STORAGE_DIR = Path(__import__("os").getenv("STORAGE_DIR", "storage"))
+STORAGE_DIR = Path(os.getenv("STORAGE_DIR", "storage"))
 ORIGINALS_DIR = STORAGE_DIR / "originals"
 THUMBS_DIR = STORAGE_DIR / "thumbs"
 ORIGINALS_DIR.mkdir(parents=True, exist_ok=True)
@@ -32,13 +33,24 @@ ORIGINALS_DIR.mkdir(parents=True, exist_ok=True)
 (THUMBS_DIR / "medium").mkdir(parents=True, exist_ok=True)
 
 
+def _dt_to_z(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    # assume stored datetimes are UTC (naive) and emit ISO-8601 with Z
+    return dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _response_from_row(row: Image):
-    metadata = {
-        "width": row.width,
-        "height": row.height,
-        "format": row.format,
-        "size_bytes": row.size_bytes,
-    } if row.width is not None else {}
+    metadata = (
+        {
+            "width": row.width,
+            "height": row.height,
+            "format": row.format,
+            "size_bytes": row.size_bytes,
+        }
+        if row.width is not None
+        else {}
+    )
 
     thumbnails = {}
     if row.thumb_small_path and row.thumb_medium_path:
@@ -52,7 +64,7 @@ def _response_from_row(row: Image):
         "data": {
             "image_id": row.id,
             "original_name": row.original_name,
-            "processed_at": row.processed_at.isoformat() if row.processed_at else None,
+            "processed_at": _dt_to_z(row.processed_at),
             "metadata": metadata,
             "thumbnails": thumbnails,
             "caption": row.caption,
@@ -71,8 +83,23 @@ def upload_image(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
+    # ✅ invalid format should return spec-shaped JSON (not FastAPI "detail")
     if file.content_type not in ("image/jpeg", "image/png"):
-        raise HTTPException(status_code=400, detail="Only JPG and PNG files are allowed")
+        image_id = str(uuid4())
+
+        row = Image(
+            id=image_id,
+            original_name=file.filename,
+            content_type=file.content_type or "application/octet-stream",
+            status="failed",
+            created_at=datetime.utcnow(),
+            processed_at=datetime.utcnow(),
+            error_message="invalid file format",
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return _response_from_row(row)
 
     image_id = str(uuid4())
     ext = ".jpg" if file.content_type == "image/jpeg" else ".png"
@@ -99,7 +126,7 @@ def upload_image(
     db.add(row)
     db.commit()
 
-    # Process synchronously (fastest path for <1 day)
+    # Process synchronously
     try:
         metadata, thumbnails, caption, elapsed = process_image_file(
             image_id=image_id,
@@ -126,7 +153,6 @@ def upload_image(
         db.add(row)
         db.commit()
         db.refresh(row)
-
         return _response_from_row(row)
 
     except Exception as e:
@@ -172,6 +198,7 @@ def get_thumbnail(image_id: str, size: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Thumbnail file missing")
 
     return FileResponse(p, media_type="image/jpeg")
+
 
 @app.get("/api/stats")
 def stats(db: Session = Depends(get_db)):
