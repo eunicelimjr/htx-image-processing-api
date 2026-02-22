@@ -88,3 +88,22 @@ def list_images(db: Session = Depends(get_db)):
         })
 
     return response
+
+@app.get("/api/images/{image_id}")
+def get_image(image_id: str, db: Session = Depends(get_db)):
+    row = db.query(Image).filter(Image.id == image_id).first()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    return {
+        "status": row.status,
+        "data": {
+            "image_id": row.id,
+            "original_name": row.original_name,
+            "processed_at": row.processed_at,
+            "metadata": {},
+            "thumbnails": {},
+        },
+        "error": row.error_message,
+    }
