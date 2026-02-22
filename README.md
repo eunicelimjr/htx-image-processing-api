@@ -1,274 +1,200 @@
-# HTX Image Processing Pipeline API
+# HTX Image Processing API
 
-## Overview
+A FastAPI-based image processing service that supports image uploads, thumbnail generation, metadata extraction, AI captioning (BLIP), and processing statistics.
 
-This project implements a RESTful Image Processing Pipeline API as required by the HTX Software Engineering Technical Assessment.
-
-The API performs the following:
-
-- Accepts image uploads (JPG, PNG)
-- Extracts image metadata (width, height, format, file size)
-- Generates two thumbnails (small and medium)
-- Generates an AI caption using a HuggingFace model
-- Stores results in a SQLite database
-- Provides image retrieval endpoints
-- Provides processing statistics
-
-All responses follow the structured format required in the assessment document.
+Built as part of a technical assessment.
 
 ---
 
-## Architecture Overview
-
-### Processing Pipeline
-
-1. Image is uploaded via `POST /api/images`
-2. Image is saved locally under `storage/originals/`
-3. Metadata is extracted using Pillow:
-   - Width
-   - Height
-   - Format
-   - File size in bytes
-4. Two thumbnails are generated:
-   - Small (max 128px dimension)
-   - Medium (max 512px dimension)
-5. AI caption is generated using a HuggingFace Transformer model
-6. All results are stored in a SQLite database
-7. A structured JSON response is returned
-
----
-
-## Technology Stack
-
-- FastAPI
-- SQLAlchemy
-- SQLite
-- Pillow
-- HuggingFace Transformers
-- PyTorch
-- Uvicorn
-- PyTest
-
----
-
-## Project Structure
-
-```
-htx-image-processing-api/
-│
-├── app/
-│   ├── main.py
-│   ├── db.py
-│   ├── models.py
-│   └── processing.py
-│
-├── tests/
-│   └── test_api.py
-│
-├── storage/                # Ignored in git
-├── requirements.txt
-├── README.md
-└── htx_images.db           # Ignored in git
-```
-
----
-
-## Setup Instructions
-
-### 1. Clone the Repository
-
-```
-git clone <your-repository-url>
-cd htx-image-processing-api
-```
-
----
-
-### 2. Create Virtual Environment
-
-#### Windows
-
-```
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-#### Mac / Linux
-
-```
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
----
-
-### 3. Install Dependencies
-
-```
-pip install -r requirements.txt
-```
-
-All dependencies are version-pinned for reproducibility.
-
----
-
-### 4. Run the Application
-
-```
-uvicorn app.main:app --reload
-```
-
-API Base URL:
-
-```
-http://127.0.0.1:8000
-```
-
-Swagger Documentation:
-
-```
-http://127.0.0.1:8000/docs
-```
-
----
-
-## API Endpoints
+## 🚀 Features
 
 ### POST `/api/images`
+- Accept JPG and PNG image uploads
+- Generate two thumbnails (small & medium)
+- Extract metadata:
+  - width
+  - height
+  - format
+  - file size (bytes)
+  - file datetime (UTC)
+- Generate AI caption using:
+  - `Salesforce/blip-image-captioning-large`
+- Store results in SQLite database
+- Return structured JSON response
 
-Uploads an image and processes it.
+### GET `/api/images`
+- List all processed images
+- Includes:
+  - processing status
+  - metadata
+  - thumbnails
+  - caption
 
-Supported formats:
+### GET `/api/images/{id}`
+- Retrieve specific image details
+- Includes thumbnails and caption
+
+### GET `/api/images/{id}/thumbnails/{small|medium}`
+- Return generated thumbnail image
+
+### GET `/api/stats`
+- Processing statistics:
+  - total images
+  - success / failure count
+  - success rate
+  - average processing time
+
+---
+
+## 🧠 AI Captioning
+
+Uses HuggingFace BLIP model:
+
+Salesforce/blip-image-captioning-large
+
+Captioning behavior:
+- Lazy-loaded (model loads only when needed)
+- Automatically falls back if disabled or fails
+
+Environment variables:
+
+DISABLE_CAPTION=1              # Disable AI captioning  
+CAPTION_MODEL=<model_name>     # Override caption model  
+CAPTION_FALLBACK=...           # Custom fallback caption text  
+
+---
+
+## 🗄️ Database
+
+Uses SQLite.
+
+Database file:
+htx_images.db
+
+Persisted fields:
+- image id
+- original filename
+- content type
+- processing status
+- timestamps
+- metadata
+- thumbnail paths
+- caption
+- processing time
+
+---
+
+## 📦 Installation
+
+### 1. Clone the repository
+
+git clone <your-repo-url>  
+cd htx-image-processing-api  
+
+### 2. Create virtual environment
+
+python -m venv .venv  
+.\.venv\Scripts\activate  
+
+### 3. Install dependencies
+
+pip install -r requirements.txt  
+
+---
+
+## ▶️ Running the API
+
+uvicorn app.main:app --reload  
+
+Open in browser:
+
+http://127.0.0.1:8000/docs
+
+Swagger UI is enabled for testing.
+
+---
+
+## 🧪 Running Tests
+
+python -m pytest -q  
+
+Tests cover:
+- health endpoint
+- upload
+- listing
+- get by id
+- thumbnail retrieval
+- stats endpoint
+
+---
+
+## 📁 Project Structure
+
+app/  
+ ├── main.py          # FastAPI routes  
+ ├── processing.py    # Image processing + AI captioning  
+ ├── models.py        # SQLAlchemy models  
+ ├── db.py            # Database configuration  
+
+storage/  
+ ├── originals/  
+ └── thumbs/  
+     ├── small/  
+     └── medium/  
+
+tests/  
+ └── test_api.py  
+
+---
+
+## ⚙️ Design Decisions
+
+- SQLite chosen for simplicity and portability
+- Synchronous processing for clarity and reliability
+- Lazy model loading to reduce startup cost
+- Defensive error handling to ensure consistent API response format
+- ISO-8601 timestamps (UTC)
+
+---
+
+## 📌 Supported Formats
+
 - JPG
 - PNG
 
-Example response:
+Invalid formats return structured failure responses.
 
-```json
+---
+
+## 📊 Example Response
+
 {
   "status": "success",
   "data": {
-    "image_id": "uuid",
+    "image_id": "1234",
     "original_name": "photo.png",
-    "processed_at": "2026-02-22T12:00:00Z",
+    "processed_at": "2026-02-22T17:42:40Z",
     "metadata": {
-      "width": 1396,
-      "height": 550,
-      "format": "PNG",
-      "size_bytes": 43931,
-      "caption": "Generated caption"
+      "width": 448,
+      "height": 448,
+      "format": "png",
+      "size_bytes": 81203,
+      "file_datetime": "2026-02-22T17:42:37Z"
     },
     "thumbnails": {
-      "small": "/api/images/{id}/thumbnails/small",
-      "medium": "/api/images/{id}/thumbnails/medium"
-    }
+      "small": "/api/images/1234/thumbnails/small",
+      "medium": "/api/images/1234/thumbnails/medium"
+    },
+    "caption": "there are two keys that are sitting side by side"
   },
   "error": null
 }
-```
 
 ---
 
-### GET `/api/images`
+## 🏁 Status
 
-Returns a list of processed images.
-
----
-
-### GET `/api/images/{id}`
-
-Returns detailed information about a specific image.
-
----
-
-### GET `/api/images/{id}/thumbnails/{small|medium}`
-
-Returns the requested thumbnail image file.
-
----
-
-### GET `/api/stats`
-
-Returns processing statistics.
-
-Example:
-
-```json
-{
-  "total": 3,
-  "failed": 0,
-  "success_rate": "100.0%",
-  "average_processing_time_seconds": 0.52
-}
-```
-
----
-
-## Running Tests
-
-To run unit tests:
-
-```
-pytest
-```
-
-Tests cover:
-
-- Health endpoint
-- Image upload
-- Image retrieval
-- Statistics endpoint
-
----
-
-## Error Handling
-
-The API includes handling for:
-
-- Unsupported file formats
-- Corrupted image files
-- Missing image IDs
-- Missing thumbnails
-- Processing failures
-
-All error responses follow the required structured format:
-
-```
-{
-  "status": "failed",
-  "data": null,
-  "error": "error message"
-}
-```
-
----
-
-## Logging
-
-Application logging is implemented using Python’s built-in `logging` module instead of print statements.
-
----
-
-## Notes
-
-- SQLite database file: `htx_images.db`
-- Uploaded files stored under `storage/`
-- The `storage/` directory and database file are ignored in git
-- Dependencies are pinned in `requirements.txt`
-- Swagger UI is available at `/docs`
-
----
-
-## Compliance
-
-This implementation satisfies all mandatory requirements of the HTX Software Engineering Assessment:
-
-- Image upload
-- Thumbnail generation
-- Metadata extraction
-- AI captioning
-- Statistics endpoint
-- Structured response format
-- Logging
-- Error handling
-- Unit testing
+All required endpoints implemented.  
+AI captioning working.  
+Processing statistics implemented.  
+Database persistence enabled.
