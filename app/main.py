@@ -52,7 +52,7 @@ def _response_from_row(row: Image):
         "data": {
             "image_id": row.id,
             "original_name": row.original_name,
-            "processed_at": row.processed_at,
+            "processed_at": row.processed_at.isoformat() if row.processed_at else None,
             "metadata": metadata,
             "thumbnails": thumbnails,
             "caption": row.caption,
@@ -83,6 +83,7 @@ def upload_image(
 
     # Save original
     content = file.file.read()
+    file.file.close()
     with open(original_path, "wb") as f:
         f.write(content)
 
@@ -175,23 +176,27 @@ def get_thumbnail(image_id: str, size: str, db: Session = Depends(get_db)):
 @app.get("/api/stats")
 def stats(db: Session = Depends(get_db)):
     rows = db.query(Image).all()
-    total = len(rows)
-    failed = len([r for r in rows if r.status == "failed"])
-    success = len([r for r in rows if r.status == "success"])
+    total_images = len(rows)
+    failed_images = len([r for r in rows if r.status == "failed"])
+    successful_images = len([r for r in rows if r.status == "success"])
 
     success_times = [
         r.processing_time_seconds
         for r in rows
         if r.status == "success" and r.processing_time_seconds is not None
     ]
+    average_processing_time_seconds = (
+        sum(success_times) / len(success_times) if success_times else 0.0
+    )
 
-    avg_time = (sum(success_times) / len(success_times)) if success_times else 0.0
-
-    success_rate = (success / total * 100.0) if total > 0 else 0.0
+    success_rate_percent = (
+        (successful_images / total_images) * 100.0 if total_images else 0.0
+    )
 
     return {
-        "total": total,
-        "failed": failed,
-        "success_rate": f"{round(success_rate, 2)}%",
-        "average_processing_time_seconds": round(avg_time, 2),
+        "total_images": total_images,
+        "successful_images": successful_images,
+        "failed_images": failed_images,
+        "success_rate_percent": round(success_rate_percent, 2),
+        "average_processing_time_seconds": round(average_processing_time_seconds, 4),
     }

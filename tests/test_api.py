@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 def _make_png_bytes():
     img = PILImage.new("RGB", (64, 32), color=(255, 0, 0))
     import io
+
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -25,6 +26,7 @@ def test_endpoints_basic():
 
         # Import AFTER env vars set
         from app.main import app  # noqa
+        from app.db import engine  # <-- import engine AFTER env vars too
 
         client = TestClient(app)
 
@@ -66,4 +68,6 @@ def test_endpoints_basic():
         assert r.status_code == 200
         stats = r.json()
         assert "total_images" in stats
-        
+
+        # IMPORTANT (Windows): close DB connections so temp folder can delete test.db
+        engine.dispose()
