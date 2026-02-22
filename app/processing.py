@@ -8,47 +8,77 @@ from PIL import Image as PILImage
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded captioner (avoid loading at import time)
-_captioner = None
+# Lazy-loaded caption model/processor
+_blip_processor = None
+_blip_model = None
+_blip_device = None
 
 
-def _get_captioner():
+def _get_blip():
     """
-    Best-effort captioner using HuggingFace pipeline.
-    Can be disabled by setting DISABLE_CAPTION=1.
+    Best-effort captioning using HuggingFace BLIP.
+    Disable by setting DISABLE_CAPTION=1.
+    Override model via CAPTION_MODEL env var.
     """
-    global _captioner
+    global _blip_processor, _blip_model, _blip_device
 
     if os.getenv("DISABLE_CAPTION", "0") == "1":
-        return None
+        return None, None, None
 
-    if _captioner is not None:
-        return _captioner
+    if _blip_processor is not None and _blip_model is not None:
+        return _blip_processor, _blip_model, _blip_device
 
     try:
-        from transformers import pipeline
+        import torch
+        from transformers import BlipProcessor, BlipForConditionalGeneration
 
-        # Smaller than BLIP-large; faster to pull in many environments
-        _captioner = pipeline(
-            "image-to-text",
-            model=os.getenv("CAPTION_MODEL", "nlpconnect/vit-gpt2-image-captioning"),
-        )
-        logger.info("Caption model loaded.")
-        return _captioner
-    except Exception as e:
-        logger.warning("Failed to load caption model: %s", e)
-        _captioner = None
-        return None
+        model_name = os.getenv("CAPTION_MODEL", "Salesforce/blip-image-captioning-large")
+
+        # Pick device
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        processor = BlipProcessor.from_pretrained(model_name)
+        model = BlipForConditionalGeneration.from_pretrained(model_name)
+
+        model.to(device)
+        model.eval()
+
+        _blip_processor = processor
+        _blip_model = model
+        _blip_device = device
+
+        logger.info("BLIP caption model loaded: %s (device=%s)", model_name, device)
+        return _blip_processor, _blip_model, _blip_device
+
+    except Exception:
+        logger.exception("Failed to load BLIP caption model")
+        _blip_processor, _blip_model, _blip_device = None, None, None
+        return None, None, None
 
 
 def _make_thumbnail(img: PILImage.Image, max_side: int) -> PILImage.Image:
-    # Copy and resize maintaining aspect ratio, bounded by max_side
+    """
+    Resize maintaining aspect ratio, bounded by max_side.
+    Output is forced to RGB/L so it can be saved as JPEG.
+    """
     out = img.copy()
     out.thumbnail((max_side, max_side))
-    # Ensure JPEG-safe mode
     if out.mode not in ("RGB", "L"):
         out = out.convert("RGB")
     return out
+
+
+def _file_mtime_iso_z(path: Path) -> str:
+    """
+    Return file modified time as ISO-8601 with Z (UTC).
+    """
+    import datetime
+    ts = path.stat().st_mtime
+    return (
+        datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def process_image_file(
@@ -65,12 +95,13 @@ def process_image_file(
     """
     start = time.perf_counter()
 
-    # Read original with Pillow
+    size_bytes = original_path.stat().st_size
+    file_datetime_iso = _file_mtime_iso_z(original_path)
+
+    # Open image
     with PILImage.open(original_path) as img:
         width, height = img.size
         fmt = (img.format or "").upper()
-
-        size_bytes = original_path.stat().st_size
 
         # Thumbnails
         small = _make_thumbnail(img, 128)
@@ -79,36 +110,47 @@ def process_image_file(
         thumbs_small_path.parent.mkdir(parents=True, exist_ok=True)
         thumbs_medium_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Save thumbnails as JPEG for consistency
         small.save(thumbs_small_path, format="JPEG", quality=85)
         medium.save(thumbs_medium_path, format="JPEG", quality=85)
 
-    # Caption (best-effort)
-    caption = None
-    captioner = _get_captioner()
-    if captioner is None:
-        caption = os.getenv("CAPTION_FALLBACK", "caption_unavailable")
-    else:
-        try:
-            # pipeline expects PIL image or path; using path avoids re-open issues
-            out = captioner(str(original_path))
-            # Typical output: [{"generated_text": "..."}]
-            if isinstance(out, list) and out and "generated_text" in out[0]:
-                caption = out[0]["generated_text"]
-            else:
-                caption = os.getenv("CAPTION_FALLBACK", "caption_unavailable")
-        except Exception as e:
-            logger.warning("Caption generation failed: %s", e)
+        # Captioning (best-effort)
+        processor, model, device = _get_blip()
+        if processor is None or model is None:
             caption = os.getenv("CAPTION_FALLBACK", "caption_unavailable")
+        else:
+            try:
+                import torch
+
+                # BLIP expects RGB images
+                cap_img = img.convert("RGB")
+
+                inputs = processor(images=cap_img, return_tensors="pt")
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+
+                with torch.no_grad():
+                    output_ids = model.generate(
+                        **inputs,
+                        max_new_tokens=30,
+                    )
+
+                caption = processor.decode(output_ids[0], skip_special_tokens=True).strip()
+                if not caption:
+                    caption = os.getenv("CAPTION_FALLBACK", "caption_unavailable")
+
+            except Exception:
+                logger.exception("Caption generation failed")
+                caption = os.getenv("CAPTION_FALLBACK", "caption_unavailable")
 
     elapsed = time.perf_counter() - start
 
     metadata = {
         "width": width,
         "height": height,
-        "format": fmt if fmt else None,
+        "format": fmt.lower() if fmt else None,
         "size_bytes": size_bytes,
+        "file_datetime": file_datetime_iso,
     }
+
     thumbnails = {
         "small": f"/api/images/{image_id}/thumbnails/small",
         "medium": f"/api/images/{image_id}/thumbnails/medium",

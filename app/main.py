@@ -4,7 +4,7 @@ from pathlib import Path
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -40,35 +40,64 @@ def _dt_to_z(dt: datetime | None) -> str | None:
     return dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _response_from_row(row: Image):
-    metadata = (
-        {
+def _file_mtime_to_z(path_str: str | None) -> str | None:
+    if not path_str:
+        return None
+    try:
+        mtime = Path(path_str).stat().st_mtime
+        dt = datetime.utcfromtimestamp(mtime)
+        return _dt_to_z(dt)
+    except Exception:
+        return None
+
+
+def _response_from_row(row: Image, request: Request | None = None, include_caption: bool = True):
+    # metadata
+    metadata = {}
+    if row.width is not None:
+        metadata = {
             "width": row.width,
             "height": row.height,
-            "format": row.format,
+            "format": (row.format.lower() if row.format else None),
             "size_bytes": row.size_bytes,
         }
-        if row.width is not None
-        else {}
-    )
+        file_dt = _file_mtime_to_z(row.original_path)
+        if file_dt:
+            metadata["file_datetime"] = file_dt
 
+    # thumbnails
     thumbnails = {}
     if row.thumb_small_path and row.thumb_medium_path:
-        thumbnails = {
-            "small": f"/api/images/{row.id}/thumbnails/small",
-            "medium": f"/api/images/{row.id}/thumbnails/medium",
-        }
+        small_rel = f"/api/images/{row.id}/thumbnails/small"
+        medium_rel = f"/api/images/{row.id}/thumbnails/medium"
+
+        if request is not None:
+            base = str(request.base_url).rstrip("/")
+            thumbnails = {
+                "small": base + small_rel,
+                "medium": base + medium_rel,
+            }
+        else:
+            thumbnails = {
+                "small": small_rel,
+                "medium": medium_rel,
+            }
+
+    data = {
+        "image_id": row.id,
+        "original_name": row.original_name,
+        "processed_at": _dt_to_z(row.processed_at),
+        "metadata": metadata,
+        "thumbnails": thumbnails,
+        "caption" :row.caption,
+    }
+
+    if include_caption:
+        data["caption"] = row.caption
 
     return {
         "status": row.status,
-        "data": {
-            "image_id": row.id,
-            "original_name": row.original_name,
-            "processed_at": _dt_to_z(row.processed_at),
-            "metadata": metadata,
-            "thumbnails": thumbnails,
-            "caption": row.caption,
-        },
+        "data": data,
         "error": row.error_message,
     }
 
@@ -83,10 +112,9 @@ def upload_image(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    # ✅ invalid format should return spec-shaped JSON (not FastAPI "detail")
+    # Invalid format should return spec-shaped JSON (not FastAPI "detail")
     if file.content_type not in ("image/jpeg", "image/png"):
         image_id = str(uuid4())
-
         row = Image(
             id=image_id,
             original_name=file.filename,
@@ -99,7 +127,8 @@ def upload_image(
         db.add(row)
         db.commit()
         db.refresh(row)
-        return _response_from_row(row)
+        # No Request object here; relative URLs are fine for upload response
+        return _response_from_row(row, request=None, include_caption=True)
 
     image_id = str(uuid4())
     ext = ".jpg" if file.content_type == "image/jpeg" else ".png"
@@ -128,7 +157,7 @@ def upload_image(
 
     # Process synchronously
     try:
-        metadata, thumbnails, caption, elapsed = process_image_file(
+        metadata, _thumbs, caption, elapsed = process_image_file(
             image_id=image_id,
             original_path=original_path,
             thumbs_small_path=small_thumb_path,
@@ -153,7 +182,8 @@ def upload_image(
         db.add(row)
         db.commit()
         db.refresh(row)
-        return _response_from_row(row)
+
+        return _response_from_row(row, request=None, include_caption=True)
 
     except Exception as e:
         logger.exception("Processing failed for %s", image_id)
@@ -163,21 +193,23 @@ def upload_image(
         db.add(row)
         db.commit()
         db.refresh(row)
-        return _response_from_row(row)
+        return _response_from_row(row, request=None, include_caption=True)
 
 
 @app.get("/api/images")
-def list_images(db: Session = Depends(get_db)):
+def list_images(request: Request, db: Session = Depends(get_db)):
     rows = db.query(Image).order_by(Image.created_at.desc()).all()
-    return [_response_from_row(r) for r in rows]
+    # Spec sample doesn't show caption for list; keep include_caption=False for closer match
+    return [_response_from_row(r, request=request, include_caption=False) for r in rows]
 
 
 @app.get("/api/images/{image_id}")
-def get_image(image_id: str, db: Session = Depends(get_db)):
+def get_image(image_id: str, request: Request, db: Session = Depends(get_db)):
     row = db.query(Image).filter(Image.id == image_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="Image not found")
-    return _response_from_row(row)
+    # Show analysis (caption) here
+    return _response_from_row(row, request=request, include_caption=True)
 
 
 @app.get("/api/images/{image_id}/thumbnails/{size}")
@@ -220,6 +252,7 @@ def stats(db: Session = Depends(get_db)):
         (successful_images / total_images) * 100.0 if total_images else 0.0
     )
 
+    # Keep your existing keys (tests), but values are aligned to spec intent
     return {
         "total_images": total_images,
         "successful_images": successful_images,
